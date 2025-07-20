@@ -1,90 +1,45 @@
-<!-- table.html -->
 <!DOCTYPE html>
 <html>
 <head>
   <title>Blackjack Table</title>
-  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
   <style>
-    body { font-family: sans-serif; padding: 20px; }
-    .hand { margin: 10px 0; }
-    .player { margin-bottom: 10px; }
-    button { margin: 5px; padding: 10px; font-size: 1rem; }
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+    }
+    #dealer, .player {
+      margin-bottom: 10px;
+    }
+    .current {
+      font-weight: bold;
+      color: green;
+    }
+    .player {
+      margin-left: 10px;
+    }
+    .controls {
+      margin-top: 20px;
+    }
+    button {
+      padding: 10px;
+      margin-right: 10px;
+    }
   </style>
 </head>
 <body>
   <h2>Blackjack Table</h2>
-  <div><strong>You:</strong> <span id="usernameLabel"></span></div>
-  <div id="dealer" class="hand"><strong>Dealer:</strong></div>
+  <div id="dealer"><strong>Dealer:</strong></div>
   <div id="players"></div>
 
-  <div>
-    <button onclick="sendBet()">Place Bet (100)</button>
+  <div class="controls">
+    <button onclick="bet()">Bet (100)</button>
     <button onclick="startRound()">Start Round</button>
     <button onclick="hit()">Hit</button>
     <button onclick="stand()">Stand</button>
-    <button onclick="leave()">Leave Table</button>
+    <button onclick="leave()">Leave</button>
   </div>
 
-  <script>
-    const params = new URLSearchParams(location.search);
-    const username = params.get("username") || "Player";
-    document.getElementById("usernameLabel").textContent = username;
-
-    let socket = io("http://localhost:8000");
-    socket.on("connect", () => {
-      socket.emit("join", { room: "table1", username });
-    });
-
-    socket.on("joined", data => console.log("Joined room:", data));
-
-    socket.on("bet_ack", data => alert("Bet: " + JSON.stringify(data)));
-    
-    socket.on("round_result", data => {
-      renderHands(data.dealer, data.players);
-    });
-
-    socket.on("dealer_done", data => {
-      alert("Dealer done! Results: " + JSON.stringify(data.results));
-      renderHands(data.dealer, {});  // update dealer hand
-    });
-
-    function renderHands(dealer, players) {
-      document.getElementById("dealer").innerHTML = "<strong>Dealer:</strong> " + dealer.join(" ");
-      const playersDiv = document.getElementById("players");
-      playersDiv.innerHTML = "";
-      for (let pid in players) {
-        const p = players[pid];
-        const div = document.createElement("div");
-        div.className = "player";
-        const isCurrent = pid === data.current_turn;
-        div.textContent = `${p.username}: ${p.hand.join(" ")} (${p.value})` + (isCurrent ? " ← Your Turn" : "");
-        div.style.fontWeight = isCurrent ? "bold" : "normal";
-        div.style.color = isCurrent ? "green" : "black";
-
-        playersDiv.appendChild(div);
-      }
-    }
-
-    function sendBet() {
-      socket.emit("bet", { amount: 100 });
-    }
-
-    function startRound() {
-      socket.emit("start_round", {});
-    }
-
-    function hit() {
-      socket.emit("hit", {});
-    }
-
-    function stand() {
-      socket.emit("stand", {});
-    }
-
-    function leave() {
-      socket.disconnect();
-      window.location.href = "/";
-    }
-  </script>
+  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+  <script src="table.js"></script>
 </body>
 </html>

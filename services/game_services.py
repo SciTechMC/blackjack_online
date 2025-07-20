@@ -1,4 +1,5 @@
 import random
+import asyncio
 
 rooms = {}
 suits = ["♠", "♥", "♦", "♣"]
@@ -23,14 +24,23 @@ def hand_value(hand):
         aces -= 1
     return value
 
+def is_blackjack(hand):
+    return len(hand) == 2 and hand_value(hand) == 21
+
 async def handle_join(sio, sid, data):
     room = data.get("room")
     username = data.get("username", sid)
     if room not in rooms:
-        rooms[room] = {"players": {}, "dealer_hand": [], "deck": []}
-    rooms[room]["players"][sid] = {"username": username, "hand": [], "bet": 0, "status": "waiting", "balance": 1000}
+        rooms[room] = {"players": {}, "dealer_hand": [], "deck": [], "turn_index": 0, "turn_order": []}
+    rooms[room]["players"][sid] = {
+        "username": username,
+        "hand": [],
+        "bet": 0,
+        "status": "waiting",
+        "balance": 1000
+    }
     await sio.enter_room(sid, room)
-    await sio.emit("joined", {"sid": sid}, room=room)
+    await sio.emit("joined", {"sid": sid, "username": username}, room=room)
 
 async def handle_bet(sio, sid, data):
     for room, state in rooms.items():
@@ -52,70 +62,119 @@ async def handle_start_round(sio, sid):
             state["deck"] = generate_deck()
             random.shuffle(state["deck"])
             state["dealer_hand"] = [state["deck"].pop(), state["deck"].pop()]
+            state["turn_order"] = list(state["players"].keys())
+            state["turn_index"] = 0
+
             for pid, player in state["players"].items():
                 player["hand"] = [state["deck"].pop(), state["deck"].pop()]
-                player["status"] = "playing"
-            result = {
-                "dealer": [state["dealer_hand"][0], "??"],
-                "players": {
-                    pid: {"hand": p["hand"], "value": hand_value(p["hand"])}
-                    for pid, p in state["players"].items()
-                }
-            }
-            await sio.emit("round_result", result, room=room)
+                if is_blackjack(player["hand"]):
+                    player["status"] = "blackjack"
+                else:
+                    player["status"] = "playing"
+
+            await broadcast_game_state(sio, room)
+
+            if all(p["status"] != "playing" for p in state["players"].values()):
+                await dealer_play(sio, room)
+            else:
+                await start_turn_timer(sio, room)
             break
 
 async def handle_hit(sio, sid):
     for room, state in rooms.items():
-        if sid in state["players"]:
+        if sid in state["players"] and sid == current_player_sid(state):
             player = state["players"][sid]
             if player["status"] == "playing":
                 player["hand"].append(state["deck"].pop())
                 if hand_value(player["hand"]) > 21:
                     player["status"] = "busted"
-                await sio.emit("round_result", {
-                    "dealer": [state["dealer_hand"][0], "??"],
-                    "players": {
-                        pid: {"hand": p["hand"], "value": hand_value(p["hand"])}
-                        for pid, p in state["players"].items()
-                    }
-                }, room=room)
-                await check_if_round_over(sio, room)
+                    await next_turn(sio, room)
+                await broadcast_game_state(sio, room)
             break
 
 async def handle_stand(sio, sid):
     for room, state in rooms.items():
-        if sid in state["players"]:
+        if sid in state["players"] and sid == current_player_sid(state):
             player = state["players"][sid]
             if player["status"] == "playing":
                 player["status"] = "stood"
-                await check_if_round_over(sio, room)
+                await broadcast_game_state(sio, room)
+                await next_turn(sio, room)
             break
 
-async def check_if_round_over(sio, room):
+def current_player_sid(state):
+    if 0 <= state["turn_index"] < len(state["turn_order"]):
+        return state["turn_order"][state["turn_index"]]
+    return None
+
+async def next_turn(sio, room):
     state = rooms[room]
-    if all(p["status"] in ["busted", "stood"] for p in state["players"].values()):
-        while hand_value(state["dealer_hand"]) < 17:
-            state["dealer_hand"].append(state["deck"].pop())
-        dealer_val = hand_value(state["dealer_hand"])
-        results = {}
-        for sid, player in state["players"].items():
-            player_val = hand_value(player["hand"])
-            if player["status"] == "busted":
-                results[sid] = {"outcome": "lose", "balance": player["balance"]}
-            elif player_val > dealer_val or dealer_val > 21:
-                winnings = player["bet"] * 2
-                player["balance"] += winnings
-                results[sid] = {"outcome": "win", "balance": player["balance"]}
-            elif player_val == dealer_val:
-                player["balance"] += player["bet"]
-                results[sid] = {"outcome": "push", "balance": player["balance"]}
+    state["turn_index"] += 1
+    if state["turn_index"] >= len(state["turn_order"]):
+        await dealer_play(sio, room)
+    else:
+        await broadcast_game_state(sio, room)
+        await start_turn_timer(sio, room)
+
+async def broadcast_game_state(sio, room):
+    state = rooms[room]
+    current = current_player_sid(state)
+    await sio.emit("round_result", {
+        "dealer": [state["dealer_hand"][0], "??"],
+        "players": {
+            sid: {
+                "hand": p["hand"],
+                "value": hand_value(p["hand"]),
+                "username": p["username"],
+                "status": p["status"]
+            } for sid, p in state["players"].items()
+        },
+        "current_turn": current
+    }, room=room)
+
+async def start_turn_timer(sio, room, timeout=15):
+    state = rooms[room]
+    sid = current_player_sid(state)
+    await asyncio.sleep(timeout)
+    if sid == current_player_sid(state):  # still their turn?
+        state["players"][sid]["status"] = "stood"
+        await next_turn(sio, room)
+
+async def dealer_play(sio, room):
+    state = rooms[room]
+    while hand_value(state["dealer_hand"]) < 17:
+        state["dealer_hand"].append(state["deck"].pop())
+    dealer_val = hand_value(state["dealer_hand"])
+    results = {}
+
+    for sid, player in state["players"].items():
+        player_val = hand_value(player["hand"])
+        if player["status"] == "busted":
+            outcome = "lose"
+        elif player["status"] == "blackjack":
+            if is_blackjack(state["dealer_hand"]):
+                player["balance"] += player["bet"]  # push
+                outcome = "push"
             else:
-                results[sid] = {"outcome": "lose", "balance": player["balance"]}
-        await sio.emit("dealer_done", {
-            "dealer": state["dealer_hand"],
-            "results": results
-        }, room=room)
+                player["balance"] += int(player["bet"] * 2.5)  # 3:2 payout
+                outcome = "blackjack"
+        elif is_blackjack(state["dealer_hand"]):
+            outcome = "lose"
+        elif player_val > dealer_val or dealer_val > 21:
+            player["balance"] += player["bet"] * 2
+            outcome = "win"
+        elif player_val == dealer_val:
+            player["balance"] += player["bet"]
+            outcome = "push"
+        else:
+            outcome = "lose"
+
+        results[sid] = {"outcome": outcome, "balance": player["balance"]}
+
+    await sio.emit("dealer_done", {
+        "dealer": state["dealer_hand"],
+        "results": results
+    }, room=room)
 
 async def remove_player(sid):
     for room, state in rooms.items():

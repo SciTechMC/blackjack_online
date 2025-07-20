@@ -19,7 +19,7 @@ def register_handlers(sio):
         await game_services.handle_bet(sio, sid, data)
 
     @sio.event
-    async def start_round(sid, data):            # ← add the `data` parameter
+    async def start_round(sid, data):
         await game_services.handle_start_round(sio, sid)
 
     @sio.event

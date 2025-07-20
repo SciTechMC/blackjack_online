@@ -1,23 +1,33 @@
-<!-- home.html -->
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Blackjack MVP - Home</title>
+  <title>Join Blackjack</title>
   <style>
-    body { font-family: sans-serif; text-align: center; padding: 100px; }
-    input, button { font-size: 1.2rem; padding: 10px; margin: 10px; }
+    body {
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+    input, button {
+      font-size: 1.2rem;
+      padding: 10px;
+      margin: 10px;
+    }
   </style>
 </head>
 <body>
-  <h1>Join a Blackjack Table</h1>
+  <h1>Blackjack</h1>
   <input id="username" placeholder="Enter your name" />
-  <button onclick="join()">Join Table</button>
+  <button onclick="joinTable()">Join Table</button>
 
   <script>
-    function join() {
-      const username = document.getElementById('username').value.trim();
-      if (!username) return alert("Enter a username");
-      window.location.href = `/table.html?username=${encodeURIComponent(username)}`;
+    function joinTable() {
+      const name = document.getElementById("username").value.trim();
+      if (!name) return alert("Enter your name");
+      window.location.href = `/table.html?username=${encodeURIComponent(name)}&room=table1`;
     }
   </script>
 </body>
